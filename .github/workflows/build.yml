@@ -1,0 +1,86 @@
+name: build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      # Useful for debugging but should be turned on in release mode.
+      fail-fast: true
+
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        build_type: [Release]
+        c_compiler: [gcc, cl]
+        include:
+          - os: windows-latest
+            c_compiler: cl
+            cpp_compiler: cl
+          - os: ubuntu-latest
+            c_compiler: gcc
+            cpp_compiler: g++
+        exclude:
+          - os: windows-latest
+            c_compiler: gcc
+          - os: ubuntu-latest
+            c_compiler: cl
+
+    steps:
+      - name: Linux Setup
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wayland-protocols libwayland-dev
+          sudo apt-get install -y libxkbcommon-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          sudo apt-get install -y libgl1-mesa-dev
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Extract content (Bash)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          content=$(grep -oP 'project\(\K[^)]*' CMakeLists.txt)
+          echo "PROJECT_NAME=$content" >> $GITHUB_ENV
+
+      - name: Extract content (PowerShell)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          $content = Get-Content -Path "CMakeLists.txt" | Select-String -Pattern 'project\((.*?)\)' -AllMatches | ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value }
+          echo $content
+          "PROJECT_NAME=$content" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Set reusable strings
+        id: strings
+        shell: bash
+        run: |
+          echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+      - name: Configure CMake
+        run: >
+          cmake -B ${{ steps.strings.outputs.build-output-dir }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+          -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -S ${{ github.workspace }}
+
+      - name: Build
+        run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+
+      - name: Windows Upload
+        if: startsWith(matrix.os, 'windows')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-Windows-Release
+          path: ${{ steps.strings.outputs.build-output-dir }}/Release/${{ env.PROJECT_NAME }}.exe
+
+      - name: Linux Upload
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-Linux-Release
+          path: ${{ steps.strings.outputs.build-output-dir }}/${{ env.PROJECT_NAME }}

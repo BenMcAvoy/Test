@@ -1,0 +1,9 @@
+# CMake output
+.cache
+build
+
+# ImGui position saving
+imgui.ini
+
+# VSCode
+.vscode
